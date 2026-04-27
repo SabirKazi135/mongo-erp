@@ -1,0 +1,762 @@
+
+
+===== FILE: src/middlewares/notFoundMiddleware.js =====
+
+
+
+===== FILE: src/middlewares/errorMiddleware.js =====
+
+
+
+===== FILE: src/middlewares/authMiddleware.js =====
+
+const jwt = require("jsonwebtoken");
+
+const protect = (req, res, next) => {
+  const header = req.headers.authorization;
+
+  if (!header) {
+    return res.status(401).json({
+      message: "No token",
+    });
+  }
+
+  const token = header.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    req.user = decoded;
+
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      message: "Invalid token",
+    });
+  }
+};
+
+module.exports = protect;
+
+
+===== FILE: src/app.js =====
+
+const express = require("express");
+const cors = require("cors");
+
+const authRoutes = require("./routes/authRoutes");
+const companyRoutes = require("./routes/companyRoutes");
+const itemRoutes = require("./routes/itemRoutes");
+const invoiceRoutes = require("./routes/invoiceRoutes");
+const reportRoutes = require("./routes/reportRoutes");
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.send("ERP API Running");
+});
+
+app.use("/api/auth", authRoutes);
+app.use("/api/company", companyRoutes);
+app.use("/api/items", itemRoutes);
+app.use("/api/invoices", invoiceRoutes);
+app.use("/api/reports", reportRoutes);
+
+module.exports = app;
+
+
+===== FILE: src/controllers/companyController.js =====
+
+const Company = require("../models/Company");
+
+const addCompany = async (req, res) => {
+  try {
+    const company = await Company.create({
+      userId: req.user.id,
+      ...req.body,
+    });
+
+    res.status(201).json(company);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getCompanies = async (req, res) => {
+  try {
+    const companies = await Company.find({
+      userId: req.user.id,
+    }).sort({ createdAt: -1 });
+
+    res.json(companies);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateCompany = async (req, res) => {
+  try {
+    const company = await Company.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        userId: req.user.id,
+      },
+      req.body,
+      { new: true },
+    );
+
+    res.json(company);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = {
+  addCompany,
+  getCompanies,
+  updateCompany,
+};
+
+
+===== FILE: src/controllers/authController.js =====
+
+const bcrypt = require("bcryptjs");
+const User = require("../models/User");
+const generateToken = require("../utils/generateToken");
+
+const registerUser = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    const exists = await User.findOne({ email });
+
+    if (exists) {
+      return res.status(400).json({
+        message: "Email already exists",
+      });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      name,
+      email,
+      password: hashed,
+    });
+
+    res.status(201).json({
+      message: "Registered",
+      token: generateToken(user._id),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const loginUser = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(400).json({
+        message: "Invalid credentials",
+      });
+    }
+
+    const match = await bcrypt.compare(password, user.password);
+
+    if (!match) {
+      return res.status(400).json({
+        message: "Invalid credentials",
+      });
+    }
+
+    res.json({
+      message: "Login success",
+      token: generateToken(user._id),
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+module.exports = {
+  registerUser,
+  loginUser,
+};
+
+
+===== FILE: src/controllers/itemController.js =====
+
+const Item = require("../models/Item");
+
+const addItem = async (req, res) => {
+  try {
+    const item = await Item.create({
+      userId: req.user.id,
+      ...req.body,
+    });
+
+    res.status(201).json(item);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getItems = async (req, res) => {
+  try {
+    const { companyId } = req.query;
+
+    const items = await Item.find({
+      userId: req.user.id,
+      companyId,
+    }).sort({ createdAt: -1 });
+
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateItem = async (req, res) => {
+  try {
+    const item = await Item.findByIdAndUpdate(req.params.id, req.body, {
+      returnDocument: "after",
+      runValidators: true,
+    });
+
+    if (!item) {
+      return res.status(404).json({
+        message: "Item not found",
+      });
+    }
+
+    res.json(item);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const deleteItem = async (req, res) => {
+  try {
+    const item = await Item.findByIdAndDelete(req.params.id);
+
+    if (!item) {
+      return res.status(404).json({
+        message: "Item not found",
+      });
+    }
+
+    res.json({
+      message: "Item deleted",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+module.exports = {
+  addItem,
+  getItems,
+  updateItem,
+  deleteItem,
+};
+
+
+===== FILE: src/controllers/customerController.js =====
+
+
+
+===== FILE: src/controllers/invoiceController.js =====
+
+const Invoice = require("../models/Invoice");
+
+const createInvoice = async (req, res) => {
+  try {
+    const invoice = await Invoice.create({
+      userId: req.user.id,
+      ...req.body,
+    });
+
+    res.status(201).json(invoice);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const getInvoices = async (req, res) => {
+  try {
+    const { companyId, draft } = req.query;
+
+    const filters = {
+      userId: req.user.id,
+      companyId,
+    };
+
+    if (draft === "true") {
+      filters.isDraft = true;
+    } else {
+      filters.isDraft = { $ne: true };
+    }
+
+    const invoices = await Invoice.find(filters).sort({ createdAt: -1 });
+
+    res.json(invoices);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const updateInvoice = async (req, res) => {
+  try {
+    const invoice = await Invoice.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        userId: req.user.id,
+      },
+      req.body,
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
+
+    if (!invoice) {
+      return res.status(404).json({
+        message: "Invoice not found",
+      });
+    }
+
+    res.json(invoice);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const getInvoiceById = async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+
+    if (!invoice) {
+      return res.status(404).json({
+        message: "Invoice not found",
+      });
+    }
+
+    res.json(invoice);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const deleteInvoice = async (req, res) => {
+  try {
+    const invoice = await Invoice.findByIdAndDelete(req.params.id);
+
+    if (!invoice) {
+      return res.status(404).json({
+        message: "Invoice not found",
+      });
+    }
+
+    res.json({
+      message: "Invoice deleted",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+module.exports = {
+  createInvoice,
+  getInvoices,
+  updateInvoice,
+  getInvoiceById,
+  deleteInvoice,
+};
+
+
+===== FILE: src/controllers/reportController.js =====
+
+const Invoice = require("../models/Invoice");
+const Item = require("../models/Item");
+
+const getSummary = async (req, res) => {
+  try {
+    const { companyId } = req.query;
+
+    const invoices = await Invoice.find({
+      userId: req.user.id,
+      companyId,
+      // error is here
+    });
+
+    const totalInvoices = invoices.length;
+
+    const totalSales = invoices.reduce(
+      (sum, inv) => sum + (inv.grandTotal || 0),
+      0,
+    );
+
+    const totalQty = invoices.reduce((sum, inv) => {
+      const qty = inv.items.reduce((a, b) => a + (b.qty || 0), 0);
+      return sum + qty;
+    }, 0);
+
+    res.json({
+      totalInvoices,
+      totalSales,
+      totalQty,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const getInvoiceReport = async (req, res) => {
+  try {
+    const { companyId } = req.query;
+
+    const invoices = await Invoice.find({
+      userId: req.user.id,
+      companyId,
+    }).sort({ createdAt: -1 });
+
+    res.json(invoices);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+const getItemReport = async (req, res) => {
+  try {
+    const { companyId } = req.query;
+
+    const items = await Item.find({
+      userId: req.user.id,
+      companyId,
+    }).sort({ createdAt: -1 });
+
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+};
+
+module.exports = {
+  getSummary,
+  getInvoiceReport,
+  getItemReport,
+};
+
+
+===== FILE: src/config/db.js =====
+
+const mongoose = require("mongoose");
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
+    console.log("MongoDB Connected");
+  } catch (error) {
+    console.log("DB Error:", error.message);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+
+
+===== FILE: src/utils/generateToken.js =====
+
+const jwt = require("jsonwebtoken");
+
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "7d" });
+};
+
+module.exports = generateToken;
+
+
+===== FILE: src/utils/response.js =====
+
+
+
+===== FILE: src/utils/generateInvoiceNo.js =====
+
+
+
+===== FILE: src/routes/customerRoutes.js =====
+
+
+
+===== FILE: src/routes/invoiceRoutes.js =====
+
+const router = require("express").Router();
+
+const protect = require("../middlewares/authMiddleware");
+
+const {
+  createInvoice,
+  getInvoices,
+  updateInvoice,
+  getInvoiceById,
+  deleteInvoice,
+} = require("../controllers/invoiceController");
+
+router.post("/", protect, createInvoice);
+router.get("/", protect, getInvoices);
+router.put("/:id", protect, updateInvoice);
+router.get("/:id", protect, getInvoiceById);
+router.delete("/:id", protect, deleteInvoice);
+
+module.exports = router;
+
+
+===== FILE: src/routes/reportRoutes.js =====
+
+const router = require("express").Router();
+
+const protect = require("../middlewares/authMiddleware");
+
+const {
+  getSummary,
+  getInvoiceReport,
+  getItemReport,
+} = require("../controllers/reportController");
+
+router.get("/summary", protect, getSummary);
+router.get("/invoices", protect, getInvoiceReport);
+router.get("/items", protect, getItemReport);
+
+module.exports = router;
+
+
+===== FILE: src/routes/authRoutes.js =====
+
+const router = require("express").Router();
+
+const { registerUser, loginUser } = require("../controllers/authController");
+
+router.post("/register", registerUser);
+router.post("/login", loginUser);
+
+module.exports = router;
+
+
+===== FILE: src/routes/companyRoutes.js =====
+
+const router = require("express").Router();
+
+const protect = require("../middlewares/authMiddleware");
+
+const {
+  addCompany,
+  getCompanies,
+  updateCompany,
+} = require("../controllers/companyController");
+
+router.post("/", protect, addCompany);
+router.get("/", protect, getCompanies);
+router.put("/:id", protect, updateCompany);
+
+module.exports = router;
+
+
+===== FILE: src/routes/itemRoutes.js =====
+
+const router = require("express").Router();
+
+const protect = require("../middlewares/authMiddleware");
+
+const {
+  addItem,
+  getItems,
+  updateItem,
+  deleteItem,
+} = require("../controllers/itemController");
+
+router.post("/", protect, addItem);
+router.get("/", protect, getItems);
+router.put("/:id", protect, updateItem);
+router.delete("/:id", protect, deleteItem);
+
+module.exports = router;
+
+
+===== FILE: src/server.js =====
+
+require("dotenv").config();
+
+const app = require("./app");
+const connectDB = require("./config/db");
+
+const PORT = process.env.PORT || 5000;
+
+connectDB();
+
+app.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
+});
+
+
+===== FILE: src/models/User.js =====
+
+const mongoose = require("mongoose");
+
+const userSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+
+    email: { type: String, required: true, unique: true },
+
+    password: { type: String, required: true },
+  },
+  { timestamps: true },
+);
+
+module.exports = mongoose.model("User", userSchema);
+
+
+===== FILE: src/models/Invoice.js =====
+
+const mongoose = require("mongoose");
+
+const invoiceSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      required: true,
+    },
+
+    billNo: String,
+    customerName: String,
+    address: String,
+    mobile: String,
+    billDate: String,
+
+    items: [
+      {
+        itemId: String,
+        itemName: String,
+        qty: Number,
+        rate: Number,
+        amount: Number,
+      },
+    ],
+
+    subtotal: Number,
+    grandTotal: Number,
+
+    isDraft: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  { timestamps: true },
+);
+
+module.exports = mongoose.model("Invoice", invoiceSchema);
+
+
+===== FILE: src/models/Company.js =====
+
+const mongoose = require("mongoose");
+
+const companySchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    companyName: { type: String, required: true },
+    ownerName: String,
+    email: String,
+    phone: String,
+    gstNumber: String,
+    address: String,
+
+    bankName: String,
+    accountNumber: String,
+    ifscCode: String,
+    branchName: String,
+  },
+  { timestamps: true },
+);
+
+module.exports = mongoose.model("Company", companySchema);
+
+
+===== FILE: src/models/Customer.js =====
+
+
+
+===== FILE: src/models/Item.js =====
+
+const mongoose = require("mongoose");
+
+const itemSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      required: true,
+    },
+
+    itemName: { type: String, required: true },
+    brandName: String,
+    hsnCode: String,
+    unit: String,
+    salePrice: { type: Number, default: 0 },
+    purchasePrice: { type: Number, default: 0 },
+    stockQty: { type: Number, default: 0 },
+  },
+  { timestamps: true },
+);
+
+module.exports = mongoose.model("Item", itemSchema);
